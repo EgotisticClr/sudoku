@@ -27,6 +27,9 @@ header{width:100%;display:flex;align-items:center;justify-content:space-between;
 .brand{font-size:17px;font-weight:700;letter-spacing:.5px}
 .brand span{display:block;font-size:11px;font-weight:500;color:var(--muted);margin-top:2px;letter-spacing:0}
 #timer{font-variant-numeric:tabular-nums;font-size:15px;font-weight:600;color:#475569;background:#fff;border:1px solid #e2e8f2;border-radius:999px;padding:5px 12px}
+.hright{display:flex;align-items:center;gap:8px}
+.iconbtn{width:36px;height:36px;border-radius:50%;border:1px solid #e2e8f2;background:#fff;font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;font-family:inherit}
+.iconbtn.off{opacity:.45}
 
 #board{
   width:min(94vw, 58vh, 520px);aspect-ratio:1/1;
@@ -96,13 +99,24 @@ header{width:100%;display:flex;align-items:center;justify-content:space-between;
 #win h2{margin:0 0 6px;font-size:22px}
 #win p{margin:0 0 18px;color:#475569;font-size:14px}
 #win button{border:none;background:var(--blue);color:#fff;font-size:15px;font-weight:600;padding:11px 22px;border-radius:10px;font-family:inherit;cursor:pointer}
+
+#ask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:70}
+#ask.hide{display:none}
+#ask .card{background:#fff;border-radius:16px;padding:22px 22px 16px;max-width:82vw;text-align:center;box-shadow:0 20px 60px rgba(15,23,42,.3)}
+#ask p{margin:0 0 16px;font-size:15px;color:#0f172a;line-height:1.5}
+.askRow{display:flex;gap:10px}
+.askRow button{flex:1;border-radius:10px;padding:10px 0;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer;border:1px solid #dbe4f0;background:#fff;color:#334155}
+.askRow #askYes{background:var(--blue);border-color:var(--blue);color:#fff}
 </style>
 </head>
 <body>
 <div id="wrap">
   <header>
     <div class="brand">数独 · Inkala 2012</div>
-    <div id="timer">00:00</div>
+    <div class="hright">
+      <div id="timer">00:00</div>
+      <button class="iconbtn" id="btnSound" type="button" aria-label="音效">🔊</button>
+    </div>
   </header>
   <div id="board"></div>
   <div id="pad"></div>
@@ -121,6 +135,15 @@ header{width:100%;display:flex;align-items:center;justify-content:space-between;
     <h2>完成！</h2>
     <p id="winTime"></p>
     <button id="btnAgain">再来一次</button>
+  </div>
+</div>
+<div id="ask" class="hide">
+  <div class="card">
+    <p id="askMsg"></p>
+    <div class="askRow">
+      <button id="askNo" type="button">取消</button>
+      <button id="askYes" type="button">确定</button>
+    </div>
   </div>
 </div>
 <script>
@@ -349,6 +372,7 @@ function checkWin() {
   save();
   document.getElementById("winTime").textContent = "用时 " + fmt(state.t) + "，恭喜过关！";
   document.getElementById("win").className = "";
+  sfxWin();
   return true;
 }
 
@@ -364,6 +388,84 @@ function toast(msg) {
   clearTimeout(toast._t);
   toast._t = setTimeout(function(){ el.className = ""; }, 1800);
 }
+
+/* 音效：用 WebAudio 现场合成，不依赖外部音频文件 */
+var soundOn = true;
+try { soundOn = window.localStorage.getItem("sudoku_sound") !== "0"; } catch (e) {}
+var AC = null;
+
+function ac() {
+  if (!AC) {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    try { AC = new Ctx(); } catch (e) { return null; }
+  }
+  if (AC.state === "suspended" && AC.resume) { try { AC.resume(); } catch (e) {} }
+  return AC;
+}
+
+function tone(freq, dur, opt) {
+  if (!soundOn) return;
+  var ctx = ac();
+  if (!ctx) return;
+  opt = opt || {};
+  var t0 = ctx.currentTime + (opt.delay || 0);
+  var gain = opt.gain || 0.09;
+  var g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  g.connect(ctx.destination);
+  var o = ctx.createOscillator();
+  o.type = opt.type || "sine";
+  o.frequency.setValueAtTime(freq, t0);
+  if (opt.slide) o.frequency.exponentialRampToValueAtTime(opt.slide, t0 + dur);
+  o.connect(g);
+  o.start(t0);
+  o.stop(t0 + dur + 0.03);
+  if (opt.harm) {
+    var g2 = ctx.createGain();
+    var o2 = ctx.createOscillator();
+    g2.gain.setValueAtTime(0.0001, t0);
+    g2.gain.exponentialRampToValueAtTime(gain * 0.22, t0 + 0.01);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * 0.7);
+    o2.type = "sine";
+    o2.frequency.setValueAtTime(freq * 2, t0);
+    o2.connect(g2);
+    g2.connect(ctx.destination);
+    o2.start(t0);
+    o2.stop(t0 + dur + 0.03);
+  }
+}
+
+var NOTES = [523.25, 587.33, 659.25, 783.99, 880.00, 1046.50, 1174.66, 1318.51, 1567.98];
+
+function sfxDigit(d) { tone(NOTES[(d - 1) % 9], 0.22, { type: "triangle", gain: 0.10, harm: true }); }
+function sfxNote(d) { tone(NOTES[(d - 1) % 9] * 1.5, 0.09, { type: "sine", gain: 0.05 }); }
+function sfxErr() { tone(180, 0.10, { type: "sine", gain: 0.07 }); tone(140, 0.12, { type: "sine", gain: 0.07, delay: 0.09 }); }
+function sfxClick() { tone(760, 0.05, { type: "sine", gain: 0.045 }); }
+function sfxUndo() { tone(520, 0.12, { type: "triangle", gain: 0.07, slide: 392 }); }
+function sfxReset() { tone(440, 0.28, { type: "triangle", gain: 0.07, slide: 220 }); }
+function sfxToggle() { tone(660, 0.07, { type: "sine", gain: 0.06 }); tone(990, 0.09, { type: "sine", gain: 0.06, delay: 0.07 }); }
+function sfxWin() {
+  var seq = [523.25, 659.25, 783.99, 1046.50];
+  for (var i = 0; i < seq.length; i++) {
+    tone(seq[i], 0.28, { type: "triangle", gain: 0.08, harm: true, delay: i * 0.12 });
+  }
+}
+
+var btnSound = document.getElementById("btnSound");
+function paintSound() {
+  btnSound.textContent = soundOn ? "🔊" : "🔇";
+  btnSound.className = soundOn ? "iconbtn" : "iconbtn off";
+}
+btnSound.addEventListener("click", function(){
+  soundOn = !soundOn;
+  try { window.localStorage.setItem("sudoku_sound", soundOn ? "1" : "0"); } catch (e) {}
+  paintSound();
+  if (soundOn) sfxToggle();
+}, false);
+paintSound();
 
 /* 事件 */
 boardEl.addEventListener("click", function(ev) {
@@ -388,8 +490,9 @@ var pad = document.getElementById("pad");
     b.innerHTML = "<b>" + n + "</b><i>9</i>";
     b.addEventListener("click", (function(d){
       return function(){
-        if (state.sel < 0) { toast("先点一个空格"); return; }
-        if (state.note) toggleNote(state.sel, d); else setVal(state.sel, d);
+        if (state.sel < 0) { toast("先点一个空格"); sfxClick(); return; }
+        if (state.note) { toggleNote(state.sel, d); sfxNote(d); }
+        else { setVal(state.sel, d); if (badSet[state.sel]) sfxErr(); else sfxDigit(d); }
       };
     })(n), false);
     pad.appendChild(b);
@@ -400,19 +503,22 @@ document.getElementById("btnNote").addEventListener("click", function(){
   state.note = !state.note;
   this.textContent = "备注：" + (state.note ? "开" : "关");
   this.className = state.note ? "tool on" : "tool";
+  sfxToggle();
 }, false);
 
 document.getElementById("btnErase").addEventListener("click", function(){
-  if (state.sel < 0) { toast("先点一个格子"); return; }
+  if (state.sel < 0) { toast("先点一个格子"); sfxClick(); return; }
   erase(state.sel);
+  sfxClick();
 }, false);
 
 document.getElementById("btnUndo").addEventListener("click", function(){
-  if (!undoStack.length) { toast("没有可撤销的操作"); return; }
+  if (!undoStack.length) { toast("没有可撤销的操作"); sfxClick(); return; }
   var s = undoStack.pop();
   state.v = s.v; state.notes = s.n;
   if (autoCand) refreshCandidates();
   render(); save();
+  sfxUndo();
 }, false);
 
 function paintAutoBtn() {
@@ -432,16 +538,38 @@ document.getElementById("btnCand").addEventListener("click", function(){
     toast("自动候选已关，候选已隐藏");
   }
   paintAutoBtn(); render(); save();
+  sfxToggle();
+}, false);
+
+var askCb = null;
+function askConfirm(msg, cb) {
+  document.getElementById("askMsg").textContent = msg;
+  askCb = cb;
+  document.getElementById("ask").className = "";
+}
+document.getElementById("askNo").addEventListener("click", function(){
+  document.getElementById("ask").className = "hide";
+  askCb = null;
+  sfxClick();
+}, false);
+document.getElementById("askYes").addEventListener("click", function(){
+  document.getElementById("ask").className = "hide";
+  var cb = askCb;
+  askCb = null;
+  if (cb) cb();
 }, false);
 
 document.getElementById("btnReset").addEventListener("click", function(){
-  if (!window.confirm("清空所有已填数字，重新开始？")) return;
-  for (var j = 0; j < 81; j++) { state.v[j] = GIVEN[j] ? PVAL[j] : 0; state.notes[j] = 0; }
-  state.sel = -1; state.t = 0; state.done = false;
-  undoStack = [];
-  if (autoCand) refreshCandidates();
-  document.getElementById("win").className = "hide";
-  paintTimer(); render(); save();
+  sfxClick();
+  askConfirm("清空所有已填数字，重新开始？", function(){
+    for (var j = 0; j < 81; j++) { state.v[j] = GIVEN[j] ? PVAL[j] : 0; state.notes[j] = 0; }
+    state.sel = -1; state.t = 0; state.done = false;
+    undoStack = [];
+    if (autoCand) refreshCandidates();
+    document.getElementById("win").className = "hide";
+    paintTimer(); render(); save();
+    sfxReset();
+  });
 }, false);
 
 document.getElementById("btnAgain").addEventListener("click", function(){
@@ -451,6 +579,7 @@ document.getElementById("btnAgain").addEventListener("click", function(){
   undoStack = [];
   if (autoCand) refreshCandidates();
   paintTimer(); render(); save();
+  sfxReset();
 }, false);
 
 function paintTimer(){ document.getElementById("timer").textContent = fmt(state.t); }
